@@ -1,0 +1,5 @@
+{
+  "name": "GeoAlarm AI",
+  "description": "A natural language location-based alarm app using Gemini and Google Maps.",
+  "requestFramePermissions": ["geolocation", "microphone"]
+}

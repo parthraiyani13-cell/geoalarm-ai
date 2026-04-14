@@ -1,0 +1,47 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* Custom Leaflet Dark Mode */
+.leaflet-container {
+  background: #0a0a0a !important;
+}
+
+.leaflet-tile {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+}
+
+.leaflet-control-zoom-in, .leaflet-control-zoom-out {
+  background-color: #151619 !important;
+  color: white !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(0,0,0,0.5) !important;
+  color: rgba(255,255,255,0.5) !important;
+}
+
+/* Glowing Circle */
+.glowing-circle {
+  filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.6));
+  animation: pulse-glow 2s infinite alternate;
+}
+
+@keyframes pulse-glow {
+  from {
+    filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.4));
+  }
+  to {
+    filter: drop-shadow(0 0 12px rgba(249, 115, 22, 0.8));
+  }
+}
+
+.custom-div-icon {
+  background: none !important;
+  border: none !important;
+}
