@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, FormEvent, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { MapPin, Bell, Search, Loader2, Navigation, VolumeX, Crosshair, X, Trash2, Check, Sliders, Mic } from 'lucide-react';
+import { MapPin, Bell, Search, Loader2, Navigation, VolumeX, Crosshair, X, Trash2, Check, Sliders, Mic, Radio } from 'lucide-react';
 import { parseAlarmText } from './lib/gemini';
 import { useGeolocation, calculateDistance } from './lib/geolocation';
 import { AlarmPlayer } from './lib/audio';
 import { motion, AnimatePresence } from 'motion/react';
+
+import { AdBanner } from './components/AdBanner';
 
 // Fix Leaflet marker icons - removing default shadow to prevent "pink symbols"
 // @ts-ignore
@@ -119,11 +121,27 @@ const formatRadius = (meters: number) => {
 
 export default function App() {
   const { location: userLocation, error: geoError, loading: geoLoading } = useGeolocation();
+  const [isAppLoading, setIsAppLoading] = useState(true);
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [shouldFollowUser, setShouldFollowUser] = useState(false);
   const [isSheetExpanded, setIsSheetExpanded] = useState(false);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [isPremium, setIsPremium] = useState(false);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   
   // Manual pin placement state
   const [draftLocation, setDraftLocation] = useState<[number, number] | null>(null);
@@ -199,7 +217,7 @@ export default function App() {
       try {
         const response = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(inputText)}&limit=5`,
-          { headers: { 'User-Agent': 'GeoAlarmAI/1.0' } }
+          { headers: { 'User-Agent': 'NearAlert/1.0' } }
         );
         if (response.ok) {
           const data = await response.json();
@@ -238,7 +256,7 @@ export default function App() {
       try {
         const response = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(parsed.location)}&limit=1&addressdetails=1`,
-          { headers: { 'User-Agent': 'GeoAlarmAI/1.0' } }
+          { headers: { 'User-Agent': 'NearAlert/1.0' } }
         );
         
         if (!response.ok) {
@@ -392,7 +410,7 @@ export default function App() {
 
     // Browser Notification
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("GeoAlarm Arrived!", {
+      new Notification("NearAlert Arrived!", {
         body: `You are within ${alarm.radiusMeters}m of ${alarm.targetName}.`,
         icon: "/favicon.ico"
       });
@@ -426,13 +444,23 @@ export default function App() {
     
     setIsProcessing(true);
     try {
-      // Reverse geocode to get a name
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${draftLocation[0]}&lon=${draftLocation[1]}`,
-        { headers: { 'User-Agent': 'GeoAlarmAI/1.0' } }
-      );
-      const data = await response.json();
-      const name = data.display_name?.split(',')[0] || `Pinned Location (${draftLocation[0].toFixed(4)}, ${draftLocation[1].toFixed(4)})`;
+      let name = `Pinned Location (${draftLocation[0].toFixed(4)}, ${draftLocation[1].toFixed(4)})`;
+
+      if (!isOffline) {
+        try {
+          // Reverse geocode to get a name
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${draftLocation[0]}&lon=${draftLocation[1]}`,
+            { headers: { 'User-Agent': 'NearAlert/1.0' } }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            name = data.display_name?.split(',')[0] || name;
+          }
+        } catch (err) {
+          console.warn("Reverse geocoding failed", err);
+        }
+      }
 
       const newAlarm: Alarm = {
         id: Math.random().toString(36).substr(2, 9),
@@ -461,11 +489,76 @@ export default function App() {
 
   const activeAlarms = alarms.filter(a => !a.triggered);
 
+  useEffect(() => {
+    // Show loading screen for at least 2 seconds for premium feel
+    const timer = setTimeout(() => {
+      if (!geoLoading) setIsAppLoading(false);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [geoLoading]);
+
+  // Handle final loading release when GPS is ready
+  useEffect(() => {
+    if (!geoLoading && isAppLoading) {
+      const timer = setTimeout(() => setIsAppLoading(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [geoLoading, isAppLoading]);
+
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] overflow-hidden font-sans text-white">
-      {/* Loading Overlay */}
+      {/* Premium Loading Screen */}
       <AnimatePresence>
-        {geoLoading && !userLocation && !geoError && (
+        {isAppLoading && (
+          <motion.div
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, y: -20, filter: 'blur(20px)' }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
+            className="fixed inset-0 z-[5000] bg-[#0a0a0a] flex flex-col items-center justify-center p-6 text-center"
+          >
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5 }}
+              className="relative mb-8"
+            >
+              <div className="absolute inset-0 aurora-bg blur-3xl rounded-full opacity-50 scale-150"></div>
+              <div className="bg-orange-500 p-6 rounded-3xl relative z-10 shadow-2xl">
+                <Radio className="w-16 h-16 text-white" />
+              </div>
+            </motion.div>
+            <motion.h1 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="text-4xl font-black mb-3 tracking-tighter"
+            >
+              NearAlert
+            </motion.h1>
+            <motion.p 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              transition={{ delay: 0.6 }}
+              className="text-white font-medium italic"
+            >
+              Wake up before you arrive
+            </motion.p>
+            
+            <div className="absolute bottom-16 w-48 h-1 bg-white/5 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-orange-500"
+                initial={{ width: "0%" }}
+                animate={{ width: "100%" }}
+                transition={{ duration: 2.5, ease: "easeInOut" }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Loading Overlay (Original GPS) */}
+      <AnimatePresence>
+        {!isAppLoading && geoLoading && !userLocation && !geoError && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -540,6 +633,11 @@ export default function App() {
                     </div>
                   </Tooltip>
                 )}
+                {!alarm.triggered && (
+                  <Tooltip permanent direction="center" className="radius-label-tooltip">
+                    {formatRadius(alarm.radiusMeters)}
+                  </Tooltip>
+                )}
               </Circle>
             </div>
           ))}
@@ -585,44 +683,85 @@ export default function App() {
       <div className="absolute inset-0 z-[1100] pointer-events-none flex flex-col items-center p-4">
         
         {/* Compact Header Bar */}
-        <motion.header 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-lg bg-[#151619]/80 backdrop-blur-xl border border-white/10 rounded-full px-5 py-2.5 shadow-2xl pointer-events-auto flex items-center justify-between"
+        <motion.div
+           className="w-full max-w-lg relative pointer-events-auto"
+           initial={{ opacity: 0, y: -20 }}
+           animate={{ opacity: 1, y: 0 }}
         >
-          <div className="flex items-center gap-2.5">
-            <div className="bg-orange-500/20 p-1.5 rounded-lg">
-              <MapPin className="w-4 h-4 text-orange-500" />
-            </div>
-            <h1 className="text-white font-bold text-sm tracking-tight">GeoAlarm AI</h1>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {userLocation && (
-              <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/10 rounded-full border border-blue-500/20">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500"></span>
-                </span>
-                <span className="text-blue-400 text-[9px] font-black uppercase tracking-widest">Live</span>
+          <div className="absolute -inset-1 aurora-bg blur-lg opacity-30 rounded-full"></div>
+          <header 
+            className="relative w-full glass-panel rounded-full px-5 py-2.5 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="relative">
+                <div className="bg-orange-500 p-1.5 rounded-lg relative z-10 cursor-pointer" onClick={() => setIsPremium(!isPremium)}>
+                  <Radio className="w-4 h-4 text-white animate-pulse" />
+                </div>
               </div>
-            )}
-            <button
-              onClick={() => setShouldFollowUser(true)}
-              className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${
-                shouldFollowUser 
-                ? 'bg-blue-500 text-white' 
-                : 'text-white/40 hover:text-white'
-              }`}
-            >
-              {geoLoading && !userLocation ? (
-                <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-              ) : (
-                <Crosshair className="w-4 h-4" />
+              <div className="flex flex-col">
+                <h1 className="text-white font-bold text-sm tracking-tight leading-none">NearAlert</h1>
+                {isPremium && <span className="text-[8px] text-orange-500 font-black uppercase tracking-widest mt-0.5">Premium</span>}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {activeAlarms.length > 0 && (
+                <motion.div 
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/20 rounded-full border border-green-500/30"
+                >
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
+                  </span>
+                  <span className="text-green-400 text-[9px] font-black uppercase tracking-widest">Alarm Active</span>
+                </motion.div>
               )}
-            </button>
-          </div>
-        </motion.header>
+              {userLocation && (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/10 rounded-full border border-blue-500/20">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500"></span>
+                  </span>
+                  <span className="text-blue-400 text-[9px] font-black uppercase tracking-widest">Live</span>
+                </div>
+              )}
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setShouldFollowUser(true)}
+                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${
+                  shouldFollowUser 
+                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' 
+                  : 'text-white/40 hover:text-white'
+                }`}
+              >
+                {geoLoading && !userLocation ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                ) : (
+                  <Crosshair className="w-4 h-4" />
+                )}
+              </motion.button>
+            </div>
+          </header>
+        </motion.div>
+
+        {/* Offline Banner */}
+        <AnimatePresence>
+          {isOffline && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mt-3 px-4 py-2 glass-panel rounded-full flex items-center gap-2 pointer-events-auto border-yellow-500/30"
+            >
+              <div className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-bold text-yellow-500 uppercase tracking-wider">
+                Offline mode — set location by tapping map
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Alarm Triggered Modal */}
         <AnimatePresence>
@@ -632,52 +771,57 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 flex flex-col items-center justify-center bg-red-600 pointer-events-auto z-[3000]"
+              className="fixed inset-0 flex flex-col items-center justify-center pointer-events-auto z-[3000]"
             >
+              <div className="absolute inset-0 bg-[#0a0a0a]/60 backdrop-blur-3xl" />
               <motion.div
                 animate={{ 
-                  backgroundColor: ['rgba(220, 38, 38, 1)', 'rgba(153, 27, 27, 1)', 'rgba(220, 38, 38, 1)'],
+                  background: [
+                    'radial-gradient(circle at center, rgba(220, 38, 38, 0.4) 0%, transparent 70%)',
+                    'radial-gradient(circle at center, rgba(220, 38, 38, 0.8) 0%, transparent 70%)',
+                    'radial-gradient(circle at center, rgba(220, 38, 38, 0.4) 0%, transparent 70%)'
+                  ],
                 }}
-                transition={{ repeat: Infinity, duration: 0.5 }}
-                className="absolute inset-0 z-0"
+                transition={{ repeat: Infinity, duration: 1.5 }}
+                className="absolute inset-0 z-0 opacity-50"
               />
               
               <motion.div 
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
+                initial={{ scale: 0.8, opacity: 0, y: 50 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.8, opacity: 0, y: 50 }}
+                transition={{ type: "spring", damping: 15 }}
                 className="relative z-10 flex flex-col items-center px-6 text-center"
               >
                 <motion.div 
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ repeat: Infinity, duration: 1 }}
-                  className="w-32 h-32 bg-white/20 rounded-full flex items-center justify-center mb-10 shadow-2xl"
+                  animate={{ scale: [1, 1.1, 1] }}
+                  transition={{ repeat: Infinity, duration: 2 }}
+                  className="w-40 h-40 bg-orange-500 rounded-full flex items-center justify-center mb-10 shadow-[0_0_80px_rgba(249,115,22,0.5)] border-4 border-white/20"
                 >
-                  <Bell className="w-16 h-16 text-white" />
+                  <MapPin className="w-20 h-20 text-white animate-bounce" />
                 </motion.div>
                 
-                <h2 className="text-5xl font-black text-white mb-4 tracking-tighter uppercase italic">ALARM!</h2>
-                <p className="text-white text-2xl font-bold mb-12 leading-tight max-w-xs">
-                  You are near <br/>
-                  <span className="text-yellow-300 underline underline-offset-8">
-                    {alarms.find(a => a.id === activeAlarmId)?.targetName}
-                  </span>
+                <h2 className="text-6xl font-black text-white mb-2 tracking-tighter uppercase italic">YOU'RE HERE</h2>
+                <p className="text-white/60 text-xl font-medium mb-12 max-w-sm truncate px-4">
+                  {alarms.find(a => a.id === activeAlarmId)?.targetName}
                 </p>
                 
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   onClick={handleStopAlarm}
-                  className="w-64 bg-white text-red-600 font-black py-8 rounded-full transition-all shadow-[0_20px_50px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 flex items-center justify-center gap-4 text-2xl uppercase tracking-widest"
+                  className="w-72 bg-white text-black font-black py-6 rounded-3xl transition-all shadow-2xl flex items-center justify-center gap-4 text-2xl uppercase tracking-widest"
                 >
                   <VolumeX className="w-8 h-8" />
-                  STOP
-                </button>
+                  DISMISS
+                </motion.button>
               </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Bottom Section */}
-        <div className="mt-auto w-full max-w-2xl flex flex-col gap-4 pointer-events-auto items-center">
+        <div className={`mt-auto w-full max-w-2xl flex flex-col gap-4 pointer-events-auto items-center ${!isPremium ? 'pb-[68px] md:pb-[98px]' : ''}`}>
           
           {/* Manual Pin Popup */}
           <AnimatePresence>
@@ -686,20 +830,18 @@ export default function App() {
                 initial={{ y: 100, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: 100, opacity: 0 }}
-                className="w-[92%] max-w-sm p-4 shadow-2xl z-[1200] mb-2"
-                style={{ 
-                  background: 'rgba(10, 10, 10, 0.35)',
-                  backdropFilter: 'blur(40px)',
-                  WebkitBackdropFilter: 'blur(40px)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '1.5rem'
-                }}
+                transition={{ type: "spring", damping: 20, stiffness: 300 }}
+                className="w-[92%] max-w-sm p-4 z-[1200] mb-2 glass-panel rounded-[2.5rem]"
               >
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold">Set alarm here?</h3>
-                  <button onClick={() => setDraftLocation(null)} className="p-1.5 text-white/40 hover:text-white">
+                  <h3 className="text-sm font-bold">New Alarm Location</h3>
+                  <motion.button 
+                    whileTap={{ scale: 0.8 }}
+                    onClick={() => setDraftLocation(null)} 
+                    className="p-1.5 text-white/40 hover:text-white"
+                  >
                     <X className="w-4 h-4" />
-                  </button>
+                  </motion.button>
                 </div>
 
                 <div className="space-y-4">
@@ -718,18 +860,19 @@ export default function App() {
                       step="100"
                       value={draftRadius}
                       onChange={(e) => setDraftRadius(parseInt(e.target.value))}
-                      className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                      className="w-full h-1.5 bg-white/5 rounded-full appearance-none cursor-pointer accent-orange-500"
                     />
                   </div>
 
-                  <button
+                  <motion.button
+                    whileTap={{ scale: 0.98 }}
                     onClick={handleConfirmDraft}
                     disabled={isProcessing}
-                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-black py-3 rounded-xl transition-all shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2 text-xs"
+                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-3xl transition-all shadow-xl shadow-orange-500/20 flex items-center justify-center gap-2 text-xs uppercase tracking-widest glow-orange"
                   >
                     {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                     Confirm Location
-                  </button>
+                  </motion.button>
                 </div>
               </motion.div>
             )}
@@ -740,20 +883,14 @@ export default function App() {
             {activeAlarms.length > 0 && (
               <motion.div
                 initial={{ y: 100, opacity: 0 }}
-                animate={{ y: isSheetExpanded ? 0 : 60, opacity: 1 }}
+                animate={{ y: isSheetExpanded ? 0 : 70, opacity: 1 }}
                 exit={{ y: 100, opacity: 0 }}
-                className="shadow-[0_-20px_50px_rgba(0,0,0,0.5)] overflow-hidden"
-                style={{ 
-                  background: 'rgba(10, 10, 10, 0.2)',
-                  backdropFilter: 'blur(30px)',
-                  WebkitBackdropFilter: 'blur(30px)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '2.5rem 2.5rem 0 0'
-                }}
+                transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                className="w-full max-w-2xl glass-panel rounded-t-[3rem] shadow-[0_-20px_80px_rgba(0,0,0,0.6)]"
               >
                 <button 
                   onClick={() => setIsSheetExpanded(!isSheetExpanded)}
-                  className="w-full py-4 flex flex-col items-center gap-2 group"
+                  className="w-full py-5 flex flex-col items-center gap-2 group"
                 >
                   <div className="w-12 h-1.5 bg-white/10 rounded-full group-hover:bg-white/20 transition-colors"></div>
                   <div className="flex items-center gap-2">
@@ -808,33 +945,27 @@ export default function App() {
                 )}
               </AnimatePresence>
               
-              <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 to-blue-500/20 rounded-[2.5rem] blur-3xl opacity-30 group-hover:opacity-60 transition-opacity duration-700"></div>
+              <div className="absolute inset-0 bg-gradient-to-r from-orange-500/40 to-blue-500/40 rounded-[2.5rem] blur-2xl opacity-40 group-hover:opacity-70 transition-opacity duration-700"></div>
               
               <div 
-                className="relative shadow-2xl flex items-center p-1.5"
-                style={{ 
-                  background: 'rgba(10, 10, 10, 0.2)',
-                  backdropFilter: 'blur(30px)',
-                  WebkitBackdropFilter: 'blur(30px)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '2rem'
-                }}
+                className="relative shadow-[0_20px_80px_rgba(0,0,0,0.7)] flex items-center p-2 glass-panel rounded-[2.5rem]"
               >
-                <div className="pl-4 pr-2">
-                  <Search className="w-4 h-4 text-white/20" />
+                <div className="pl-5 pr-2">
+                  <Search className="w-4 h-4 text-white/40" />
                 </div>
                 <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                  placeholder="e.g. Wake me up 2km before my office"
-                  className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-white/20 text-sm py-2.5 px-1 font-medium min-w-0"
-                  disabled={isProcessing}
+                  onFocus={() => !isOffline && suggestions.length > 0 && setShowSuggestions(true)}
+                  placeholder={isOffline ? "Search needs internet" : "e.g. Wake me up 300m before airport"}
+                  className={`flex-1 bg-transparent border-none outline-none text-white placeholder:text-white/20 text-sm py-3 px-1 font-medium min-w-0 ${isOffline ? 'cursor-not-allowed italic' : ''}`}
+                  disabled={isProcessing || isOffline}
                 />
-                <div className="flex items-center gap-1 pr-1">
+                <div className="flex items-center gap-1.5 pr-1.5">
                   {inputText && (
-                    <button 
+                    <motion.button 
+                      whileTap={{ scale: 0.8 }}
                       type="button"
                       onClick={() => {
                         setInputText('');
@@ -844,13 +975,15 @@ export default function App() {
                       className="p-2 text-white/20 hover:text-white transition-colors"
                     >
                       <X className="w-4 h-4" />
-                    </button>
+                    </motion.button>
                   )}
                   
-                  <button 
+                  <motion.button 
+                    whileTap={{ scale: 0.8 }}
                     type="button"
                     onClick={toggleRecording}
-                    className={`p-2 rounded-full transition-all relative ${isRecording ? 'text-red-500' : 'text-white/20 hover:text-white'}`}
+                    disabled={isOffline}
+                    className={`p-2.5 rounded-full transition-all relative ${isRecording ? 'text-red-500' : 'text-white/20 hover:text-white'} ${isOffline ? 'opacity-30 cursor-not-allowed' : ''}`}
                   >
                     {isRecording && (
                       <motion.div
@@ -861,22 +994,23 @@ export default function App() {
                       />
                     )}
                     <Mic className={`w-4 h-4 relative z-10 ${isRecording ? 'animate-pulse' : ''}`} />
-                  </button>
+                  </motion.button>
 
-                  <button 
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
                     type="submit"
-                    disabled={isProcessing || !inputText.trim()}
-                    className="bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black uppercase tracking-wider px-4 py-2 rounded-full transition-all disabled:opacity-50 disabled:hover:bg-orange-500 flex items-center gap-1.5"
+                    disabled={isProcessing || !inputText.trim() || isOffline}
+                    className="bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest px-6 py-3 rounded-full transition-all disabled:opacity-50 disabled:hover:bg-orange-500 flex items-center gap-2 glow-orange"
                   >
                     {isProcessing ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
                     ) : (
                       <>
-                        Set
+                        SET
                         <Check className="w-3 h-3" />
                       </>
                     )}
-                  </button>
+                  </motion.button>
                 </div>
               </div>
             </form>
@@ -908,6 +1042,8 @@ export default function App() {
         
       </div>
 
+      <AdBanner isPremium={isPremium} />
+
       <style>{`
         .radius-tooltip {
           background: rgba(249, 115, 22, 0.9) !important;
@@ -920,6 +1056,19 @@ export default function App() {
           box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3) !important;
         }
         .radius-tooltip::before {
+          display: none !important;
+        }
+        .radius-label-tooltip {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          color: rgba(255, 255, 255, 0.6) !important;
+          font-weight: 700 !important;
+          font-size: 10px !important;
+          text-shadow: 0 0 10px rgba(0,0,0,0.8) !important;
+          pointer-events: none !important;
+        }
+        .radius-label-tooltip::before {
           display: none !important;
         }
         .custom-scrollbar::-webkit-scrollbar {
